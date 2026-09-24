@@ -1,0 +1,26 @@
+Verified 2026-09-24
+ThinkPad X1 Carbon Gen 10, type 21CCS4MF00
+BIOS N3AET87W 1.52 (2025-08-06)
+
+$ lspci -nnk -s 00:0d.1
+00:0d.1 USB controller [0c03]: Intel Corporation Device [8086:460e] (rev 02)
+	Subsystem: Lenovo Device [17aa:22e7]
+	Kernel driver in use: dwc3-pci
+	Kernel modules: dwc3_pci
+
+$ cat /sys/class/udc/dwc3.1.auto/uevent
+USB_UDC_NAME=dwc3-gadget
+
+$ cat /sys/class/udc/dwc3.1.auto/maximum_speed
+super-speed
+
+$ cat /sys/class/udc/dwc3.1.auto/state
+not attached
+
+Kernel boot log:
+pci 0000:00:0d.1: [8086:460e] type 00 class 0x0c03fe conventional PCI endpoint
+dwc3-pci 0000:00:0d.1: enabling device (0000 -> 0002)
+
+Type-C class state on both ports:
+data_role=host [device]
+power_role=source [sink]
