@@ -195,18 +195,31 @@ Before attachment, the expected state is `not attached`. After connecting a
 known USB host to the xDCI-routed receptacle, state should progress through USB
 enumeration and normally reach `configured`.
 
-## Rollback
+## Proposed rollback (not yet tested)
 
-The firmware change is one byte. Boot the same service-marker medium and run:
+The verified enable command wrote a one-byte value of `0x01`:
 
 ```text
+setup_var_cv SaSetup 0xBF 0x01 0x01
+```
+
+According to the upstream `setup_var_cv` syntax, the third argument is the
+variable size and the fourth is the value. The syntactic inverse is therefore
+to write the one-byte value `0x00`. This rollback has **not** been executed on
+the tested machine. If you choose to test it, boot the same service-marker
+medium, read the current value first, write zero, and read it back:
+
+```text
+setup_var_cv SaSetup 0xBF
 setup_var_cv SaSetup 0xBF 0x01 0x00
 setup_var_cv SaSetup 0xBF
 ```
 
-The final value must be `0x00`. After reboot, `00:0d.1` and the UDC should no
-longer be present. Reformat the disposable USB medium to remove its service
-markers and restore normal FAT-tool compatibility.
+The expected final value is `0x00`. Based on the decoded firmware condition,
+`00:0d.1` and the UDC are then expected to disappear after reboot, but neither
+the rollback nor that post-reboot result has been verified. Reformat the
+disposable USB medium afterward to remove its service markers and restore
+normal FAT-tool compatibility.
 
 ## Confidence boundary
 
@@ -214,5 +227,6 @@ markers and restore normal FAT-tool compatibility.
   BIOS N3AET87W 1.52.
 - **High confidence:** the combined service marker is what removed the variable
   write protection; the same command failed immediately before it was applied.
-- **Unverified:** other X1 Carbon Gen 10 BIOS revisions, other Lenovo models,
-  physical port mapping, VBUS behavior, suspend/resume, and end-use protocols.
+- **Unverified:** rollback to `0x00`, other X1 Carbon Gen 10 BIOS revisions,
+  other Lenovo models, physical port mapping, VBUS behavior, suspend/resume,
+  and end-use protocols.
