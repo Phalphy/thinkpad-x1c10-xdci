@@ -2,7 +2,12 @@
 set -euo pipefail
 
 gadget=/sys/kernel/config/usb_gadget/x1c10_xdci_test
-udc=dwc3.1.auto
+udc=${1:-dwc3.1.auto}
+
+if [[ $# -gt 1 ]]; then
+  echo "Usage: $0 [UDC_NAME]" >&2
+  exit 2
+fi
 
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root." >&2

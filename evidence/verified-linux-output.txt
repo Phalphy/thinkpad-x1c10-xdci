@@ -17,10 +17,40 @@ super-speed
 $ cat /sys/class/udc/dwc3.1.auto/state
 not attached
 
-Kernel boot log:
+TCSS-only kernel boot log:
 pci 0000:00:0d.1: [8086:460e] type 00 class 0x0c03fe conventional PCI endpoint
 dwc3-pci 0000:00:0d.1: enabling device (0000 -> 0002)
 
-Type-C class state on both ports:
+TCSS-only Type-C state while testing both receptacles against an external host:
 data_role=host [device]
 power_role=source [sink]
+
+Read-only MMIO inspection during that test:
+DWC3 GCTL port-capability direction=device
+DWC3 DCTL RUN/STOP=active
+TCSS USB2 and USB3 PHY power state=D0
+UDC state remained=not attached
+
+After PchSetup[0x47] changed from 0x00 to 0x01:
+
+$ lspci -nnk -s 00:14.1
+00:14.1 USB controller [0c03]: Intel Corporation Device [8086:51ee] (rev 01)
+	Subsystem: Lenovo Device [17aa:22e7]
+	Kernel driver in use: dwc3-pci
+	Kernel modules: dwc3_pci
+
+$ ls /sys/class/udc
+dwc3.1.auto  dwc3.2.auto
+
+$ cat /sys/class/udc/dwc3.2.auto/state
+not attached
+
+Kernel boot log:
+dwc3-pci 0000:00:0d.1: enabling device (0000 -> 0002)
+dwc3-pci 0000:00:14.1: enabling device (0000 -> 0002)
+
+Verified gadget bind:
+$ sudo ./scripts/start-xdci-hid-test-gadget.sh dwc3.2.auto
+Bound HID test gadget to dwc3.2.auto.
+
+Attachment to an external host after enabling PchSetup[0x47] was not yet tested.

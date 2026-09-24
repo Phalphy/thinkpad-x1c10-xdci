@@ -2,10 +2,10 @@
 
 ## Result
 
-On 2026-09-24, a stock ThinkPad X1 Carbon Gen 10 was made to expose its hidden
-Intel TCSS xDCI controller without an SPI programmer or added USB hardware. The
-controller is a real DWC3 USB Device Controller and registers with Linux's USB
-Gadget subsystem.
+On 2026-09-24, a stock ThinkPad X1 Carbon Gen 10 was made to expose both hidden
+Intel xDCI functions without an SPI programmer or added USB hardware. The TCSS
+and PCH functions both bind to Linux's DWC3 driver and register separate UDCs
+with the USB Gadget subsystem.
 
 This is a verified result for the following machine and firmware:
 
@@ -13,16 +13,16 @@ This is a verified result for the following machine and firmware:
 | --- | --- |
 | ThinkPad type | `21CCS4MF00` |
 | BIOS | `N3AET87W` 1.52, 2025-08-06 |
-| Target variable | `SaSetup`, GUID `72c5e28c-7783-43a1-8767-fad73fccafa4` |
-| Target payload byte | `0xBF` |
-| Old/new value | `0x00` -> `0x01` |
-| xDCI PCI function | `00:0d.1`, `8086:460e` |
+| TCSS variable | `SaSetup[0xBF]`, GUID `72c5e28c-7783-43a1-8767-fad73fccafa4` |
+| PCH variable | `PchSetup[0x47]`, GUID `4570b7f1-ade8-4943-8dc3-406472842384` |
+| Old/new value | `0x00` -> `0x01` for both bytes |
+| TCSS xDCI function | `00:0d.1`, `8086:460e`, UDC `dwc3.1.auto` |
+| PCH xDCI function | `00:14.1`, `8086:51ee`, UDC `dwc3.2.auto` |
 | Linux driver | `dwc3-pci` |
-| Registered UDC | `dwc3.1.auto`, `USB_UDC_NAME=dwc3-gadget` |
 
-Do not reuse the `SaSetup` offset on a different BIOS build without extracting
+Do not reuse either variable offset on a different BIOS build without extracting
 and checking that build's IFR. The USB-marker offsets described below are disk
-byte offsets; the `SaSetup` offset is an offset inside the firmware variable.
+byte offsets; the setup offsets are payload offsets inside firmware variables.
 
 ## What was new in this reproduction
 
@@ -37,9 +37,12 @@ The contribution established here is the complete machine-specific chain:
 2. confirm that a normal EFI `SetVariable` call returns
    `EFI_WRITE_PROTECTED`;
 3. apply both Lenovo service markers to the same bootable modGRUB USB medium;
-4. change only `SaSetup[0xBF]` from `0` to `1`;
-5. verify the expected `8086:460e` PCI function, `dwc3-pci`, and a live Linux
-   UDC after reboot.
+4. change `SaSetup[0xBF]` from `0` to `1` and verify the resulting TCSS UDC;
+5. establish through a live USB-host test that TCSS-only activation leaves the
+   UDC `not attached` despite correct Type-C role negotiation and active
+   DWC3/PHY;
+6. change `PchSetup[0x47]` from `0` to `1` and verify the second, PCH-side xDCI
+   function and UDC after reboot.
 
 Source for the Lenovo marker mechanism:
 <https://www.reddit.com/r/thinkpad/comments/1vj1udn/how_to_enter_advanced_bios_options_on_gen_1_t15gp/>
@@ -96,10 +99,15 @@ For BIOS N3AET87W 1.52, the verified target is:
 SaSetup GUID: 72c5e28c-7783-43a1-8767-fad73fccafa4
 payload size: 0x4E7
 TCSS xDCI Support: offset 0xBF, size 1, disabled=0, enabled=1
+
+PchSetup GUID: 4570b7f1-ade8-4943-8dc3-406472842384
+payload size: 0x852
+xDCI Support (USB OTG Device): offset 0x47, size 1, disabled=0, enabled=1
 ```
 
-Firmware analysis also showed that this setting gates ACPI/PCI device `TXDC`
-at `00:0d.1`, expected device ID `8086:460e`.
+Firmware analysis showed that the TCSS setting gates ACPI/PCI device `TXDC` at
+`00:0d.1`, expected device ID `8086:460e`. The PCH setting subsequently exposed
+`00:14.1`, device ID `8086:51ee`, exactly as measured after reboot.
 
 ### 2. Create a disposable UEFI boot medium
 
@@ -140,7 +148,7 @@ Expected final verification:
 After: byte[10]=0x7a, byte[21]=0xf0
 ```
 
-### 4. Change the single firmware byte
+### 4. Enable both split-xDCI firmware bytes
 
 Fully power off the ThinkPad, boot the USB medium through the F12 menu, and run:
 
@@ -148,12 +156,16 @@ Fully power off the ThinkPad, boot the USB medium through the F12 menu, and run:
 setup_var_cv SaSetup 0xBF
 setup_var_cv SaSetup 0xBF 0x01 0x01
 setup_var_cv SaSetup 0xBF
+setup_var_cv PchSetup 0x47
+setup_var_cv PchSetup 0x47 0x01 0x01
+setup_var_cv PchSetup 0x47
 ```
 
-The first read should show `0x00`; the final read must show:
+The first reads should show `0x00`; both final reads must show:
 
 ```text
 offset 0xbf is: 0x01
+offset 0x47 is: 0x01
 ```
 
 Reboot and remove the USB medium.
@@ -162,9 +174,10 @@ Reboot and remove the USB medium.
 
 ```bash
 lspci -nnk -s 00:0d.1
+lspci -nnk -s 00:14.1
 ls -l /sys/class/udc
 cat /sys/class/udc/dwc3.1.auto/uevent
-cat /sys/class/udc/dwc3.1.auto/maximum_speed
+cat /sys/class/udc/dwc3.2.auto/uevent
 ```
 
 Verified output:
@@ -173,21 +186,36 @@ Verified output:
 00:0d.1 USB controller [0c03]: Intel Corporation Device [8086:460e]
         Kernel driver in use: dwc3-pci
 
-USB_UDC_NAME=dwc3-gadget
-super-speed
+00:14.1 USB controller [0c03]: Intel Corporation Device [8086:51ee]
+        Kernel driver in use: dwc3-pci
+
+/sys/class/udc/dwc3.1.auto
+/sys/class/udc/dwc3.2.auto
 ```
 
-Both Type-C class ports additionally reported `host [device]` for data role and
-`source [sink]` for power role. Physical receptacle mapping and enumeration
-against an external USB host remain the next empirical tests.
+With only `SaSetup[0xBF]` enabled, both Type-C class ports reported
+`host [device]` for data role and `source [sink]` for power role against an
+external USB host, but `dwc3.1.auto` remained `not attached` on both
+receptacles. Direct read-only MMIO inspection showed peripheral mode, RUN/STOP
+active, and the TCSS USB2/USB3 PHY powered.
+
+The second setting exposed `00:14.1 [8086:51ee]` and `dwc3.2.auto`, matching
+Intel's documented Alder Lake split-xDCI architecture. A gadget binds to that
+UDC. Physical attachment after the second change is not yet tested.
+
+Sources for the split-controller interpretation:
+
+- <https://edc.intel.com/content/www/pl/pl/design/ipla/software-development-platforms/client/platforms/alder-lake-desktop/intel-600-series-chipset-family-platform-controller-hub-pch-datasheet-volume/001/usb-dual-role-support-extensible-device-controller-interface-xdci-controller/>
+- <https://lkml.iu.edu/hypermail/linux/kernel/2209.1/05223.html>
+- <https://github.com/torvalds/linux/blob/master/drivers/usb/dwc3/dwc3-pci.c>
 
 ## Minimal gadget smoke test
 
 This repository contains a no-keystroke HID descriptor for enumeration testing:
 
 ```bash
-sudo ./scripts/start-xdci-hid-test-gadget.sh
-cat /sys/class/udc/dwc3.1.auto/state
+sudo ./scripts/start-xdci-hid-test-gadget.sh dwc3.2.auto
+cat /sys/class/udc/dwc3.2.auto/state
 sudo ./scripts/stop-xdci-test-gadget.sh
 ```
 
@@ -197,10 +225,11 @@ enumeration and normally reach `configured`.
 
 ## Proposed rollback (not yet tested)
 
-The verified enable command wrote a one-byte value of `0x01`:
+The verified enable commands wrote one-byte values of `0x01`:
 
 ```text
 setup_var_cv SaSetup 0xBF 0x01 0x01
+setup_var_cv PchSetup 0x47 0x01 0x01
 ```
 
 According to the upstream `setup_var_cv` syntax, the third argument is the
@@ -213,20 +242,24 @@ medium, read the current value first, write zero, and read it back:
 setup_var_cv SaSetup 0xBF
 setup_var_cv SaSetup 0xBF 0x01 0x00
 setup_var_cv SaSetup 0xBF
+setup_var_cv PchSetup 0x47
+setup_var_cv PchSetup 0x47 0x01 0x00
+setup_var_cv PchSetup 0x47
 ```
 
-The expected final value is `0x00`. Based on the decoded firmware condition,
-`00:0d.1` and the UDC are then expected to disappear after reboot, but neither
-the rollback nor that post-reboot result has been verified. Reformat the
-disposable USB medium afterward to remove its service markers and restore
-normal FAT-tool compatibility.
+Both expected final values are `0x00`. Based on the decoded firmware conditions,
+`00:0d.1`, `00:14.1`, and their UDCs are then expected to disappear after
+reboot, but neither rollback nor either post-reboot result has been verified.
+Reformat the disposable USB medium afterward to remove its service markers and
+restore normal FAT-tool compatibility.
 
 ## Confidence boundary
 
-- **Certain:** the result and outputs above were measured on type 21CCS4MF00,
-  BIOS N3AET87W 1.52.
+- **Certain:** both firmware writes, PCI functions, driver bindings, UDCs, and
+  the TCSS-only negative attachment test above were measured on type
+  21CCS4MF00, BIOS N3AET87W 1.52.
 - **High confidence:** the combined service marker is what removed the variable
   write protection; the same command failed immediately before it was applied.
 - **Unverified:** rollback to `0x00`, other X1 Carbon Gen 10 BIOS revisions,
-  other Lenovo models, physical port mapping, VBUS behavior, suspend/resume,
-  and end-use protocols.
+  other Lenovo models, attachment through `dwc3.2.auto`, VBUS behavior,
+  suspend/resume, and end-use protocols.
